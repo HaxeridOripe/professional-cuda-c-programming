@@ -1,5 +1,6 @@
 #include "stdio.h"
 #include "cuda_runtime.h"
+#include "windows.h"
 
 #define CHECK(call) \
 { \
@@ -66,20 +67,42 @@ void main(){
     int nx = 8;
     int ny = 6;
     int nxy = nx * ny;
-    int nBytes = nxy * sizeof(float);
+    printf("Matrix size: nx=%d ny=%d\n", nx, ny);
 
-    int *h_A = (int *)malloc(nBytes);
-    initialInt(h_A, nxy);
-    printMatrix(h_A, nx, ny);
-    int *d_A;
-    cudaMalloc((int**)&d_A, nBytes);
-    cudaMemcpy(d_A, h_A, nBytes, cudaMemcpyHostToDevice);
-    dim3 block(4, 2);
+    size_t size = nxy * sizeof(float);
+    float *h_A = (float *)malloc(size);
+    float *h_B = (float *)malloc(size);
+    float *hostRef = (float *)malloc(size);
+    float *gpuRef = (float *)malloc(size);
+
+    initialInt((int *)h_A, nxy);
+    initialInt((int *)h_B, nxy);
+    memset(hostRef, 0, size);
+    memset(gpuRef, 0, size);
+    LARGE_INTEGER frequency;        // 计时器频率
+    LARGE_INTEGER t1, t2;           // 计数器值
+
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&t1);
+    sumMatrixOnHost((int *)h_A, (int *)h_B, (int *)hostRef, nx, ny);
+    QueryPerformanceCounter(&t2);
+    double elapsedTime = (double)(t2.QuadPart - t1.QuadPart) / frequency.QuadPart;
+    printf("CPU Execution Time: %f sec\n", elapsedTime);
+
+    float *d_A, *d_B, *d_C;
+    cudaMalloc((void **)&d_A, size);
+    cudaMalloc((void **)&d_B, size);
+    cudaMemcpy(d_A, h_A, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, size, cudaMemcpyHostToDevice);
+
+    dim3 block(32, 32);
     dim3 grid((nx + block.x -1)/block.x, (ny + block.y -1)/block.y);
     printf("grid:(%d,%d,%d) block:(%d,%d,%d)\n", 
            grid.x, grid.y, grid.z,
            block.x, block.y, block.z);
-    printThreadIdx<<<grid, block>>>(d_A, nx, ny);
+    sumMatrixOnGPU<<<grid, block>>>( (int *)d_A, (int *)d_B, (int *)d_C, nx, ny);
+    cudaMemcpy(gpuRef, d_C, size, cudaMemcpyDeviceToHost);
+    
     cudaDeviceSynchronize();
 
     cudaFree(d_A);
